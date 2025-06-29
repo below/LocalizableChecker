@@ -74,12 +74,14 @@ struct LocalizableChecker: ParsableCommand {
             return
         }
         
-        // Run
-        foreachLine(inFile: sourceFilePath, apply: { line in
-            checkUnusedKey(fromLine: line, inFilesInDirectory: projectPath, withExtensions: allowedFilesExtensions, expectedMinimalNbTimes: allowNbTimes, isSwiftGenFormat: true)
-        })
-        
-        print("\n🎉 finished!")
+        let clock = ContinuousClock()
+        let result = clock.measure {
+            // Run
+            foreachLine(inFile: sourceFilePath, apply: { line in
+                checkUnusedKey(fromLine: line, inFilesInDirectory: projectPath, withExtensions: allowedFilesExtensions, expectedMinimalNbTimes: allowNbTimes, isSwiftGenFormat: true)
+            })
+        }
+        print("\n🎉 finished in \(result)!")
     }
     
     // MARK: -

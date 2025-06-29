@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "LocalizableChecker",
+    platforms: [.macOS(.v13)],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
