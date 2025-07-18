@@ -64,21 +64,43 @@ struct LocalizableChecker: ParsableCommand {
         print("🚀 running ...\n(It may take quite long! If you see nothing and it makes you anxious, enable anxious mode option.)\n")
         
         // Check input file and directory
-        if !FileManager.default.fileExists(atPath: sourceFilePath) {
-            print("⛔️ File \(sourceFilePath) does not exist. Could not start tool.")
+        guard FileManager.default.fileExists(atPath: sourceFilePath),
+              FileManager.default.fileExists(atPath: projectPath) else {
+            print("⛔️ Source file or project directory does not exist.")
             return
         }
         
-        if !FileManager.default.fileExists(atPath: projectPath) {
-            print("⛔️ Directory \(projectPath) does not exist. Could not start tool.")
+        let concurrentQueue = DispatchQueue(label: "com.localizableChecker.mainQueue", attributes: .concurrent)
+        let group = DispatchGroup()
+        
+        // Read all lines from source file first
+        guard let contents = try? String(contentsOfFile: sourceFilePath) else {
+            print("⛔️ Could not read source file.")
             return
         }
         
-        // Run
-        foreachLine(inFile: sourceFilePath, apply: { line in
-            checkUnusedKey(fromLine: line, inFilesInDirectory: projectPath, withExtensions: allowedFilesExtensions, expectedMinimalNbTimes: allowNbTimes, isSwiftGenFormat: true)
-        })
+        let lines = contents.split(separator: "\n")
         
+        // Process lines concurrently
+        let chunkSize = 10
+        stride(from: 0, to: lines.count, by: chunkSize).forEach { start in
+            let end = min(start + chunkSize, lines.count)
+            group.enter()
+            concurrentQueue.async {
+                for i in start..<end {
+                    self.checkUnusedKey(
+                        fromLine: String(lines[i]),
+                        inFilesInDirectory: self.projectPath,
+                        withExtensions: self.allowedFilesExtensions,
+                        expectedMinimalNbTimes: self.allowNbTimes,
+                        isSwiftGenFormat: self.isSwiftGenProject
+                    )
+                }
+                group.leave()
+            }
+        }
+        
+        group.wait()
         print("\n🎉 finished!")
     }
     
@@ -115,12 +137,25 @@ struct LocalizableChecker: ParsableCommand {
     /// - Parameters:
     ///   - filePath: file path
     ///   - apply: function to apply to each line. Takes a line as parameter.
-    private func foreachLine(inFile filePath: String, apply: (String) -> Void) {
+    private func foreachLine(inFile filePath: String, apply: @escaping (String) -> Void) {
         guard let contents = try? String(contentsOfFile: filePath) else { return }
-        let lines = contents.split(separator:"\n")
-        for line in lines {
-            apply(String(line))
+        let lines = contents.split(separator: "\n")
+        let concurrentQueue = DispatchQueue(label: "com.localizableChecker.lineQueue", attributes: .concurrent)
+        let group = DispatchGroup()
+        
+        // Process chunks of lines concurrently
+        let chunkSize = 100
+        stride(from: 0, to: lines.count, by: chunkSize).forEach { start in
+            let end = min(start + chunkSize, lines.count)
+            group.enter()
+            concurrentQueue.async {
+                for i in start..<end {
+                    apply(String(lines[i]))
+                }
+                group.leave()
+            }
         }
+        group.wait()
     }
     
     /// - Parameters:
@@ -128,28 +163,38 @@ struct LocalizableChecker: ParsableCommand {
     ///   - allowedExtensions: if set will only browse files with those extensions. If array is empty, browse all files.
     ///   - recursive: set to true to browse subdirectories
     ///   - apply: function to apply to each file. Takes file path as parameters
-    private func foreachFile(inDirectory directory: String, withExtensions allowedExtensions: [String], recursive: Bool = false, apply: (String) -> Void) {
-        
+    private func foreachFile(inDirectory directory: String, withExtensions allowedExtensions: [String], recursive: Bool = false, apply: @escaping (String) -> Void) {
         let fileManager = FileManager.default
         
         guard let directoryContent = try? fileManager.contentsOfDirectory(atPath: directory) else {
             fatalError("Could not open directory \(directory).")
         }
         
+        let concurrentQueue = DispatchQueue(label: "com.localizableChecker.fileQueue", attributes: .concurrent)
+        let group = DispatchGroup()
+        
         for item in directoryContent {
             let itemURL = URL(fileURLWithPath: directory).appendingPathComponent(item)
             if isDirectory(itemURL) {
                 
                 if recursive {
-                    foreachFile(inDirectory: itemURL.path, withExtensions: allowedExtensions, recursive: recursive, apply: apply)
+                    group.enter()
+                    concurrentQueue.async {
+                        self.foreachFile(inDirectory: itemURL.path, withExtensions: allowedExtensions, recursive: recursive, apply: apply)
+                        group.leave()
+                    }
                 }
-            }
-            else {
-                if allowedExtensions.count == 0 || allowedExtensions.contains(itemURL.pathExtension.lowercased()) {
-                    apply(itemURL.path)
+            } else {
+                if allowedExtensions.isEmpty || allowedExtensions.contains(itemURL.pathExtension.lowercased()) {
+                    group.enter()
+                    concurrentQueue.async {
+                        apply(itemURL.path)
+                        group.leave()
+                    }
                 }
             }
         }
+        group.wait()
     }
     
     // MARK: - Helper functions
