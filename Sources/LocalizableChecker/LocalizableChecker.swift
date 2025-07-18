@@ -104,8 +104,8 @@ struct LocalizableChecker: ParsableCommand {
             }
             
             group.wait()
-            print("\n🎉 finished!")
         }
+        print("\n🎉 finished in \(result)!")
     }
     
     // MARK: -
