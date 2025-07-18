@@ -79,29 +79,33 @@ struct LocalizableChecker: ParsableCommand {
             return
         }
         
-        let lines = contents.split(separator: "\n")
-        
-        // Process lines concurrently
-        let chunkSize = 10
-        stride(from: 0, to: lines.count, by: chunkSize).forEach { start in
-            let end = min(start + chunkSize, lines.count)
-            group.enter()
-            concurrentQueue.async {
-                for i in start..<end {
-                    self.checkUnusedKey(
-                        fromLine: String(lines[i]),
-                        inFilesInDirectory: self.projectPath,
-                        withExtensions: self.allowedFilesExtensions,
-                        expectedMinimalNbTimes: self.allowNbTimes,
-                        isSwiftGenFormat: self.isSwiftGenProject
-                    )
+        let clock = ContinuousClock()
+        let result = clock.measure {
+            
+            let lines = contents.split(separator: "\n")
+            
+            // Process lines concurrently
+            let chunkSize = 10
+            stride(from: 0, to: lines.count, by: chunkSize).forEach { start in
+                let end = min(start + chunkSize, lines.count)
+                group.enter()
+                concurrentQueue.async {
+                    for i in start..<end {
+                        self.checkUnusedKey(
+                            fromLine: String(lines[i]),
+                            inFilesInDirectory: self.projectPath,
+                            withExtensions: self.allowedFilesExtensions,
+                            expectedMinimalNbTimes: self.allowNbTimes,
+                            isSwiftGenFormat: self.isSwiftGenProject
+                        )
+                    }
+                    group.leave()
                 }
-                group.leave()
             }
+            
+            group.wait()
+            print("\n🎉 finished!")
         }
-        
-        group.wait()
-        print("\n🎉 finished!")
     }
     
     // MARK: -
