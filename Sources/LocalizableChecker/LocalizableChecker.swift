@@ -142,24 +142,52 @@ struct LocalizableChecker: ParsableCommand {
     ///   - filePath: file path
     ///   - apply: function to apply to each line. Takes a line as parameter.
     private func foreachLine(inFile filePath: String, apply: @escaping (String) -> Void) {
-        guard let contents = try? String(contentsOfFile: filePath) else { return }
-        let lines = contents.split(separator: "\n")
-        let concurrentQueue = DispatchQueue(label: "com.localizableChecker.lineQueue", attributes: .concurrent)
-        let group = DispatchGroup()
+        guard let fileHandle = FileHandle(forReadingAtPath: filePath) else { return }
+        defer { try? fileHandle.close() }
         
-        // Process chunks of lines concurrently
-        let chunkSize = 100
-        stride(from: 0, to: lines.count, by: chunkSize).forEach { start in
-            let end = min(start + chunkSize, lines.count)
-            group.enter()
-            concurrentQueue.async {
-                for i in start..<end {
-                    apply(String(lines[i]))
+        // Use FileHandle to read line by line
+        if let fileStream = InputStream(fileAtPath: filePath) {
+            fileStream.open()
+            defer { fileStream.close() }
+            
+            let bufferSize = 4096
+            var buffer = [UInt8](repeating: 0, count: bufferSize)
+            
+            var lineBuffer = ""
+            
+            // Process file line by line
+            while fileStream.hasBytesAvailable {
+                let bytesRead = fileStream.read(&buffer, maxLength: bufferSize)
+                if bytesRead > 0 {
+                    if let chunk = String(bytes: buffer[0..<bytesRead], encoding: .utf8) {
+                        let components = (lineBuffer + chunk).components(separatedBy: "\n")
+                        
+                        if components.count > 1 {
+                            // Process complete lines
+                            for i in 0..<components.count-1 {
+                                let line = components[i]
+                                // Skip empty lines
+                                if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    apply(line)
+                                }
+                            }
+                            
+                            // Save the potentially incomplete last line
+                            lineBuffer = components[components.count-1]
+                        } else {
+                            lineBuffer += chunk
+                        }
+                    }
+                } else {
+                    break
                 }
-                group.leave()
+            }
+            
+            // Process any remaining content
+            if !lineBuffer.isEmpty {
+                apply(lineBuffer)
             }
         }
-        group.wait()
     }
     
     /// - Parameters:
@@ -174,31 +202,20 @@ struct LocalizableChecker: ParsableCommand {
             fatalError("Could not open directory \(directory).")
         }
         
-        let concurrentQueue = DispatchQueue(label: "com.localizableChecker.fileQueue", attributes: .concurrent)
-        let group = DispatchGroup()
-        
+        // Process files in current directory sequentially
         for item in directoryContent {
             let itemURL = URL(fileURLWithPath: directory).appendingPathComponent(item)
             if isDirectory(itemURL) {
-                
                 if recursive {
-                    group.enter()
-                    concurrentQueue.async {
-                        self.foreachFile(inDirectory: itemURL.path, withExtensions: allowedExtensions, recursive: recursive, apply: apply)
-                        group.leave()
-                    }
+                    // Handle recursive directories sequentially
+                    foreachFile(inDirectory: itemURL.path, withExtensions: allowedExtensions, recursive: recursive, apply: apply)
                 }
             } else {
                 if allowedExtensions.isEmpty || allowedExtensions.contains(itemURL.pathExtension.lowercased()) {
-                    group.enter()
-                    concurrentQueue.async {
-                        apply(itemURL.path)
-                        group.leave()
-                    }
+                    apply(itemURL.path)
                 }
             }
         }
-        group.wait()
     }
     
     // MARK: - Helper functions
@@ -289,4 +306,3 @@ extension String {
         }
     }
 }
-
